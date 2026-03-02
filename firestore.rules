@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Helpers ---
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      // Replace with your actual admin UID from Firebase Auth console
+      return request.auth != null && request.auth.uid == "gSVGXMW9VWcXvn4JnPaQFrftpQt2";
+    }
+
+    function tournamentIsOpen(tournamentId) {
+      return get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.status == "open";
+    }
+
+    // --- Tournaments ---
+    match /tournaments/{tournamentId} {
+      allow read: if isAuthed();
+      allow write: if isAdmin();
+
+      // Players subcollection
+      match /players/{playerId} {
+        allow read: if isAuthed();
+        allow write: if isAdmin();
+      }
+    }
+
+    // --- Picks ---
+    // Doc ID format: {tournamentId}--{userId}
+    match /picks/{pickId} {
+      allow read: if isAuthed();
+
+      allow create, update: if
+        isAuthed() &&
+        request.auth.uid == resource.data.userId &&
+        tournamentIsOpen(resource.data.tournamentId);
+
+      // Allow create when doc doesn't exist yet (resource is null)
+      allow create: if
+        isAuthed() &&
+        request.auth.uid == request.resource.data.userId &&
+        tournamentIsOpen(request.resource.data.tournamentId);
+
+      allow delete: if isAdmin();
+    }
+
+    // --- Users ---
+    match /users/{userId} {
+      allow read: if isAuthed();
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
