@@ -1,0 +1,39 @@
+name: Sync Live Golf Scores
+
+on:
+  # Run every hour, every day.
+  # - Checks whether any open tournament's lockDate has passed (auto-live)
+  # - Syncs live scores Thu–Sun when tournaments are in progress
+  # - Auto-finalizes when ESPN marks an event complete
+  schedule:
+    - cron: '0 * * * *'
+
+  # Also allow manual runs from the GitHub Actions tab (useful for testing)
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Sync live scores from ESPN
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: scripts/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Run sync script
+        working-directory: scripts
+        env:
+          # Store the full service account JSON as a GitHub Secret named FIREBASE_SERVICE_ACCOUNT
+          # Settings → Secrets and variables → Actions → New repository secret
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: python sync_scores.py

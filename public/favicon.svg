@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Green background -->
+  <rect width="32" height="32" rx="6" fill="#15803d"/>
+  <!-- Tee stem -->
+  <rect x="14.5" y="20" width="3" height="8" rx="1" fill="#fbbf24"/>
+  <!-- Tee flare (top of tee) -->
+  <rect x="11" y="18" width="10" height="3" rx="1.5" fill="#fbbf24"/>
+  <!-- Golf ball -->
+  <circle cx="16" cy="13" r="7" fill="white"/>
+</svg>

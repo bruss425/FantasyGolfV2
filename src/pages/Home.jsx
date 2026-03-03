@@ -20,7 +20,7 @@ function lockCountdown(lockDate) {
   if (hours < 24) return `Locks in ${hours}h`
   const days = Math.floor(hours / 24)
   if (days === 1) return 'Locks tomorrow'
-  return `${days} days to lock`
+  return `${days} days to lock in your picks`
 }
 
 function formatDate(ts) {
@@ -37,7 +37,7 @@ function TournamentCard({ t, isUpcoming }) {
     <div className={`rounded-2xl border overflow-hidden transition ${
       isUpcoming
         ? 'bg-gray-800/40 border-gray-700/40'
-        : t.status === 'open'
+        : t.status === 'open' || t.status === 'live'
           ? 'bg-gray-800 border-gray-700'
           : 'bg-gray-800/60 border-gray-700/40'
     }`}>
@@ -54,15 +54,22 @@ function TournamentCard({ t, isUpcoming }) {
           <h3 className={`font-black text-base leading-tight ${isUpcoming ? 'text-gray-300' : 'text-white'}`}>
             {t.name}
           </h3>
-          <span className={`shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${
-            t.status === 'locked'
-              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-              : isUpcoming
-                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-          }`}>
-            {t.status === 'locked' ? 'FINAL' : isUpcoming ? 'UPCOMING' : 'OPEN'}
-          </span>
+          {t.status === 'live' ? (
+            <span className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              LIVE
+            </span>
+          ) : (
+            <span className={`shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ${
+              t.status === 'locked'
+                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                : isUpcoming
+                  ? 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+            }`}>
+              {t.status === 'locked' ? 'FINAL' : isUpcoming ? 'UPCOMING' : 'OPEN'}
+            </span>
+          )}
         </div>
 
         {/* Meta */}
