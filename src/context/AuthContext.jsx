@@ -25,13 +25,6 @@ export function AuthProvider({ children }) {
             setTeamName(data.teamName || null)
             setPhotoUrl(data.photoUrl || null)
             setNeedsSetup(false)
-          } else if (firebaseUser.displayName) {
-            // Google sign-in: auto-save their name and skip setup
-            await setDoc(userRef, { displayName: firebaseUser.displayName }, { merge: true })
-            setDisplayName(firebaseUser.displayName)
-            setTeamName(null)
-            setPhotoUrl(null)
-            setNeedsSetup(false)
           } else {
             setDisplayName(null)
             setTeamName(null)

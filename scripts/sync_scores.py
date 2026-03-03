@@ -41,9 +41,11 @@ import argparse
 import json
 import os
 import sys
+import traceback
 from datetime import datetime, timezone
 
 import requests
+from google.cloud.firestore_v1 import FieldFilter
 
 from pga_payout_table import get_payout
 
@@ -106,8 +108,18 @@ def fetch_competition(event_id: str) -> tuple[list[dict], bool, str]:
     url = SCOREBOARD_EVENT_URL.format(event_id=event_id)
     try:
         data = requests.get(url, timeout=10).json()
-        event = data["events"][0]
-        competition = event["competitions"][0]
+        events = data.get("events", [])
+        if not events:
+            print(f"[warn] ESPN returned no events for event {event_id}")
+            return [], False, f"Event {event_id}"
+
+        event = events[0]
+        competitions = event.get("competitions", [])
+        if not competitions:
+            print(f"[warn] ESPN returned no competitions for event {event_id}")
+            return [], False, event.get("name") or f"Event {event_id}"
+
+        competition = competitions[0]
 
         competitors = competition.get("competitors", [])
         event_name = event.get("name") or f"Event {event_id}"
@@ -249,7 +261,11 @@ def auto_go_live(db) -> list[str]:
     when the tournament starts — no manual "Go Live" click needed.
     """
     now = datetime.now(timezone.utc)
-    open_docs = db.collection("tournaments").where("status", "==", "open").stream()
+    open_docs = (
+        db.collection("tournaments")
+        .where(filter=FieldFilter("status", "==", "open"))
+        .stream()
+    )
     flipped = []
 
     for snap in open_docs:
@@ -433,16 +449,25 @@ def main():
 
     # ── Automated season flow ───────────────────────────────────────────────
     # Step 1: flip any open tournaments whose lockDate has now passed
-    auto_go_live(db)
+    try:
+        auto_go_live(db)
+    except Exception:
+        print("[error] auto_go_live failed:")
+        traceback.print_exc()
 
     # Step 2: sync scores (and auto-finalize) for all live tournaments
-    live_docs = db.collection("tournaments").where("status", "==", "live").stream()
+    live_docs = (
+        db.collection("tournaments")
+        .where(filter=FieldFilter("status", "==", "live"))
+        .stream()
+    )
     live_list = [(doc.id, doc.to_dict()) for doc in live_docs]
 
     if not live_list:
         print("No tournaments with status='live' found. Nothing to sync.")
         return
 
+    errors = []
     for slug, t in live_list:
         event_id = t.get("espnEventId")
         purse = t.get("purse", 0)
@@ -452,9 +477,23 @@ def main():
             continue
 
         if args.check_names:
-            check_names(db, slug, event_id)
+            try:
+                check_names(db, slug, event_id)
+            except Exception:
+                print(f"[{slug}] check_names failed:")
+                traceback.print_exc()
+                errors.append(slug)
         else:
-            sync_tournament(db, slug, event_id, purse)
+            try:
+                sync_tournament(db, slug, event_id, purse)
+            except Exception:
+                print(f"[{slug}] sync_tournament failed:")
+                traceback.print_exc()
+                errors.append(slug)
+
+    if errors:
+        print(f"\n[error] Failed to sync {len(errors)} tournament(s): {', '.join(errors)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
