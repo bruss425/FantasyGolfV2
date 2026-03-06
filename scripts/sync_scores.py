@@ -426,15 +426,27 @@ def sync_tournament(db, slug: str, event_id: str, purse: float):
     count = write_live_scores(db, slug, payout_map)
     print(f"[{slug}] Updated {count} players. liveUpdatedAt stamped.")
 
-    # Auto-finalize: only lock when ESPN says complete AND all 4 rounds are done.
-    # The extra round check guards against ESPN returning a stale/early "completed"
-    # flag (e.g. after the Thursday round finishes for the day).
-    max_rounds = max((get_rounds_played(c) for c in competitors), default=0)
-    if is_complete and max_rounds >= 4:
+    # Auto-finalize: only lock when ESPN says the event is complete AND the field
+    # has data for all 4 rounds.
+    #
+    # ESPN splits each 18-hole round into two 9-hole "periods" in linescores:
+    #   Round 1 → periods 1 & 2  → max_period = 2
+    #   Round 2 → periods 1–4    → max_period = 4
+    #   Round 3 → periods 1–6    → max_period = 6
+    #   Round 4 → periods 1–8    → max_period = 8
+    #
+    # So the correct threshold is >= 8, not >= 4.
+    # Requiring both is_complete (event-level flag, NOT competition-level) and
+    # max_period >= 8 prevents false finalization after any individual round ends.
+    max_period = max((get_rounds_played(c) for c in competitors), default=0)
+    if is_complete and max_period >= 8:
         db.document(f"tournaments/{slug}").update({"status": "locked"})
-        print(f"[{slug}] ESPN reports event complete ({max_rounds} rounds) — status set to 'locked'.")
+        print(f"[{slug}] ESPN reports event complete ({max_period} periods / 4 rounds) — status set to 'locked'.")
     elif is_complete:
-        print(f"[{slug}] ESPN says complete but only {max_rounds} round(s) played — skipping finalize.")
+        print(f"[{slug}] ESPN says complete but only {max_period} period(s) recorded — skipping finalize.")
+    else:
+        rounds_approx = max_period // 2
+        print(f"[{slug}] Tournament in progress — approximately round {rounds_approx} of 4 ({max_period} periods).")
 
 
 def main():
