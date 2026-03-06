@@ -161,11 +161,11 @@ def fetch_competition(event_id: str) -> tuple[list[dict], bool, str]:
         competitors = competition.get("competitors", [])
         event_name = event.get("name") or f"Event {event_id}"
 
-        # Completed flag lives on both the event and the competition
-        is_complete = (
-            event.get("status", {}).get("type", {}).get("completed", False)
-            or competition.get("status", {}).get("type", {}).get("completed", False)
-        )
+        # Use only the top-level event completed flag.
+        # The competition-level flag can be true at the end of each daily round
+        # (e.g. Thursday evening after round 1), which would incorrectly finalize
+        # a 4-round tournament that's only just started.
+        is_complete = event.get("status", {}).get("type", {}).get("completed", False)
 
         return competitors, is_complete, event_name
     except Exception as e:
@@ -426,10 +426,15 @@ def sync_tournament(db, slug: str, event_id: str, purse: float):
     count = write_live_scores(db, slug, payout_map)
     print(f"[{slug}] Updated {count} players. liveUpdatedAt stamped.")
 
-    # Auto-finalize: if ESPN says the event is done, lock the tournament
-    if is_complete:
+    # Auto-finalize: only lock when ESPN says complete AND all 4 rounds are done.
+    # The extra round check guards against ESPN returning a stale/early "completed"
+    # flag (e.g. after the Thursday round finishes for the day).
+    max_rounds = max((get_rounds_played(c) for c in competitors), default=0)
+    if is_complete and max_rounds >= 4:
         db.document(f"tournaments/{slug}").update({"status": "locked"})
-        print(f"[{slug}] ESPN reports event complete — status set to 'locked'.")
+        print(f"[{slug}] ESPN reports event complete ({max_rounds} rounds) — status set to 'locked'.")
+    elif is_complete:
+        print(f"[{slug}] ESPN says complete but only {max_rounds} round(s) played — skipping finalize.")
 
 
 def main():
