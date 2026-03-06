@@ -28,7 +28,15 @@ export default function Tournament() {
 
   const totalSpent = useMemo(() => picks.reduce((s, p) => s + p.price, 0), [picks])
   const totalEarnings = useMemo(() => picks.reduce((s, p) => s + (p.earnings ?? 0), 0), [picks])
-  const isLocked = tournament?.status === 'locked'
+
+  // Picks are editable only when status='open' AND lockDate hasn't passed yet
+  const lockDate = tournament?.lockDate
+    ? (tournament.lockDate.toDate ? tournament.lockDate.toDate() : new Date(tournament.lockDate))
+    : null
+  const isLocked = tournament?.status !== 'open' || (lockDate && lockDate <= new Date())
+  const isLive = tournament?.status === 'live'
+  const isFinal = tournament?.status === 'locked'
+
   const canSubmit = picks.length === 5 && totalSpent <= (tournament?.budget ?? 0)
   const hasEarnings = picks.some(p => (p.earnings ?? 0) > 0)
 
@@ -126,8 +134,17 @@ export default function Tournament() {
             ← Back
           </Link>
           <h1 className="font-black text-white flex-1 truncate">{tournament.name}</h1>
-          {isLocked ? (
+          {isFinal ? (
             <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-500/20 text-red-400 border border-red-500/30 shrink-0">
+              FINAL
+            </span>
+          ) : isLive ? (
+            <span className="shrink-0 flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              LIVE
+            </span>
+          ) : isLocked ? (
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0">
               LOCKED
             </span>
           ) : (

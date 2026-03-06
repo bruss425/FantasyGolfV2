@@ -32,6 +32,8 @@ function formatDate(ts) {
 function TournamentCard({ t, isUpcoming }) {
   const countdown = lockCountdown(t.lockDate)
   const startLabel = formatDate(t.startDate)
+  const lockDate = toDate(t.lockDate)
+  const isPickable = t.status === 'open' && (!lockDate || lockDate > new Date())
 
   return (
     <div className={`rounded-2xl border overflow-hidden transition ${
@@ -116,7 +118,7 @@ function TournamentCard({ t, isUpcoming }) {
               to={`/tournament/${t.id}`}
               className="flex-1 text-center text-sm font-bold py-2 rounded-xl transition bg-emerald-600 hover:bg-emerald-500 text-white"
             >
-              {t.status === 'open' ? 'Make Picks' : 'View Picks'}
+              {isPickable ? 'Make Picks' : 'View Picks'}
             </Link>
             <Link
               to={`/leaderboard/${t.id}`}

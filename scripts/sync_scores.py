@@ -42,12 +42,49 @@ import json
 import os
 import sys
 import traceback
+import unicodedata
 from datetime import datetime, timezone
 
 import requests
 from google.cloud.firestore_v1 import FieldFilter
 
 from pga_payout_table import get_payout
+
+
+# ---------------------------------------------------------------------------
+# Name normalization
+# ---------------------------------------------------------------------------
+
+# Characters that don't decompose via Unicode NFD and need explicit substitution
+# so that ESPN names like "Nicolai Højgaard" → "Nicolai Hojgaard"
+_CHAR_MAP = str.maketrans({
+    'ø': 'o', 'Ø': 'O',
+    'æ': 'ae', 'Æ': 'Ae',
+    'ð': 'd', 'Ð': 'D',
+    'þ': 'th', 'Þ': 'Th',
+    'ß': 'ss',
+    'ł': 'l', 'Ł': 'L',
+})
+
+
+def normalize_name(name: str) -> str:
+    """
+    Normalize an ESPN player name to match our CSV-based Firestore doc IDs.
+
+    ESPN uses proper diacritics (e.g. "Nicolai Højgaard", "Ludvig Åberg") but
+    our uploaded CSVs use plain ASCII ("Nicolai Hojgaard", "Ludvig Aberg").
+    This function strips/replaces diacritics so the names match.
+
+    Handles:
+      ø → o   (Højgaard → Hojgaard)
+      Å/å → A/a  (Åberg → Aberg)
+      é → e, ü → u, ñ → n, etc.  (most diacritics via NFD decomposition)
+    """
+    # Step 1: explicit substitutions for chars that don't NFD-decompose to ASCII
+    name = name.translate(_CHAR_MAP)
+    # Step 2: NFD decompose then drop all combining/accent marks
+    nfd = unicodedata.normalize('NFD', name)
+    return ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +208,7 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
 
     while i < len(sorted_comps):
         comp = sorted_comps[i]
-        name = comp["athlete"]["displayName"]
+        name = normalize_name(comp["athlete"]["displayName"])
         score = comp.get("score", "")
         rounds = get_rounds_played(comp)
 
@@ -205,7 +242,7 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
 
         for k in range(i, j):
             c = sorted_comps[k]
-            result[c["athlete"]["displayName"]] = {
+            result[normalize_name(c["athlete"]["displayName"])] = {
                 "liveEarnings": payout,
                 "currentPosition": pos_str,
                 "currentScore": score,
@@ -296,7 +333,7 @@ def check_names(db, slug: str, event_id: str):
     competitors, _, _ = fetch_competition(event_id)
     max_rounds = max((get_rounds_played(c) for c in competitors), default=0)
     espn_names = {
-        c["athlete"]["displayName"] for c in competitors
+        normalize_name(c["athlete"]["displayName"]) for c in competitors
         if not (max_rounds > 2 and get_rounds_played(c) < max_rounds)
     }
 
