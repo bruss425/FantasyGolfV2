@@ -445,7 +445,7 @@ def sync_tournament(db, slug: str, event_id: str, purse: float):
     elif is_complete:
         print(f"[{slug}] ESPN says complete but only {max_period} period(s) recorded — skipping finalize.")
     else:
-        rounds_approx = max_period // 2
+        rounds_approx = (max_period + 1) // 2
         print(f"[{slug}] Tournament in progress — approximately round {rounds_approx} of 4 ({max_period} periods).")
 
 
