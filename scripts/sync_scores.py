@@ -173,10 +173,30 @@ def fetch_competition(event_id: str) -> tuple[list[dict], bool, str]:
         return [], False, f"Event {event_id}"
 
 
+PLAYOFF_MIN_PERIOD = 100  # ESPN playoff periods are large integers (e.g. 402)
+
+
 def get_rounds_played(competitor: dict) -> int:
-    """Number of completed rounds for this player based on their linescores."""
+    """Max period (ALL periods including playoff) for this competitor."""
     linescores = competitor.get("linescores", [])
     periods = {ls.get("period", 0) for ls in linescores}
+    return max(periods, default=0)
+
+
+def get_standard_rounds(competitor: dict) -> int:
+    """
+    Max period EXCLUDING playoff periods (periods >= PLAYOFF_MIN_PERIOD).
+
+    ESPN uses two different period formats:
+      - Live play: 9-hole periods (2 per round; 4 rounds = periods 1-8)
+      - Completed: per-round periods (1 per round; 4 rounds = periods 1-4)
+
+    In both formats, playoff periods are large integers (e.g. 402) and are
+    excluded here so cut detection and tie-group logic aren't skewed.
+    """
+    linescores = competitor.get("linescores", [])
+    periods = [ls.get("period", 0) for ls in linescores
+               if ls.get("period", 0) < PLAYOFF_MIN_PERIOD]
     return max(periods, default=0)
 
 
@@ -191,19 +211,34 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
 
     Position comes from ESPN's `order` field (their authoritative ranking).
     Ties are detected by grouping consecutive players with identical scores.
-    Cut players are identified by having played fewer rounds than the field max
-    (e.g. 2 rounds when the leaders are on round 3 or 4).
+
+    Cut detection uses get_standard_rounds (excluding playoff periods) so that
+    neither the live 9-hole period format nor the completed per-round format causes
+    incorrect CUT flags:
+
+      Live play (9-hole periods):  Round 2 done → standard_max=4, CUT at r<2 (rounds=1,2=CUT periods)
+        Actually: standard_max=4, CUT threshold = 4/2+0.5 = 2.5, so r<=2 = CUT
+      Completed (per-round):       4 rounds done → standard_max=4, CUT at r<2.5 (rounds=2=CUT)
+      Completed with playoff:      standard_max=5, CUT at r<3.0, so r<=2 = CUT
+
+    The formula r < standard_max / 2 + 0.5 handles all three cases uniformly.
+    Playoff periods (>= PLAYOFF_MIN_PERIOD) are excluded from standard_max so
+    they don't inflate the threshold and incorrectly flag all normal players as CUT.
     """
     if not competitors:
         return {}
 
-    # Determine how far into the tournament the field is.
-    # Cap at 8 periods (4 rounds × 2 nine-hole halves) for cut detection purposes.
-    # Playoff holes push max_rounds to 9+ for the playoff participants — without the
-    # cap, every player who finished 4 normal rounds (period=8) would be wrongly
-    # flagged as CUT because 8 < 9.
-    max_rounds = max(get_rounds_played(c) for c in competitors)
-    cut_threshold = min(max_rounds, 8)
+    # Use standard rounds (excluding playoff periods) for all cut detection.
+    # This is the key fix: ESPN's completed tournament data uses 1 period per round
+    # (periods 1-4), not 2 periods per round like during live play (periods 1-8).
+    # By excluding playoff periods (e.g. 402) and using the unified formula below,
+    # cut detection works correctly in both formats.
+    standard_max = max(get_standard_rounds(c) for c in competitors)
+
+    def player_is_cut(r: int) -> bool:
+        # No cut detection until we're past the midpoint of the tournament.
+        # standard_max > 2 means at least 2 rounds/periods have been played by leaders.
+        return standard_max > 2 and r < standard_max / 2 + 0.5
 
     # Sort by ESPN's order field — this is the authoritative leaderboard ranking
     sorted_comps = sorted(competitors, key=lambda c: c.get("order", 9999))
@@ -215,13 +250,9 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
         comp = sorted_comps[i]
         name = normalize_name(comp["athlete"]["displayName"])
         score = comp.get("score", "")
-        rounds = get_rounds_played(comp)
+        rounds = get_standard_rounds(comp)
 
-        # Cut: played fewer periods than the standard 72-hole field once the cut
-        # has happened (cut_threshold > 2 means we're past round 1).
-        is_cut = cut_threshold > 2 and rounds < cut_threshold
-
-        if is_cut:
+        if player_is_cut(rounds):
             result[name] = {
                 "liveEarnings": 0,
                 "currentPosition": "CUT",
@@ -234,9 +265,8 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
         j = i
         while j < len(sorted_comps):
             nxt = sorted_comps[j]
-            nxt_rounds = get_rounds_played(nxt)
-            nxt_cut = cut_threshold > 2 and nxt_rounds < cut_threshold
-            if nxt_cut or nxt.get("score", "") != score:
+            nxt_rounds = get_standard_rounds(nxt)
+            if player_is_cut(nxt_rounds) or nxt.get("score", "") != score:
                 break
             j += 1
 
@@ -434,17 +464,19 @@ def sync_tournament(db, slug: str, event_id: str, purse: float):
     # Auto-finalize: only lock when ESPN says the event is complete AND the field
     # has data for all 4 rounds.
     #
-    # ESPN splits each 18-hole round into two 9-hole "periods" in linescores:
-    #   Round 1 → periods 1 & 2  → max_period = 2
-    #   Round 2 → periods 1–4    → max_period = 4
-    #   Round 3 → periods 1–6    → max_period = 6
-    #   Round 4 → periods 1–8    → max_period = 8
+    # ESPN uses two period formats depending on context:
+    #   Live play    → 9-hole periods (2 per round): 4 rounds = max_period 8
+    #   Completed    → per-round periods (1 per round): 4 rounds = standard_max 4
     #
-    # So the correct threshold is >= 8, not >= 4.
-    # Requiring both is_complete (event-level flag, NOT competition-level) and
-    # max_period >= 8 prevents false finalization after any individual round ends.
+    # A tournament is considered "four rounds done" if EITHER condition holds:
+    #   max_period >= 8        (live format: 4 rounds × 2 nine-hole periods)
+    #   standard_max >= 4      (completed format: periods 1–4 per round)
+    #
+    # Requiring is_complete (event-level flag) prevents false finalization mid-event.
     max_period = max((get_rounds_played(c) for c in competitors), default=0)
-    if is_complete and max_period >= 8:
+    standard_max = max((get_standard_rounds(c) for c in competitors), default=0)
+    four_rounds_done = max_period >= 8 or standard_max >= 4
+    if is_complete and four_rounds_done:
         # Zero out liveEarnings for any player doc not in ESPN's field
         # (pre-tournament withdrawals) so stale values don't appear on the leaderboard.
         all_player_docs = db.collection(f"tournaments/{slug}/players").stream()
@@ -463,9 +495,9 @@ def sync_tournament(db, slug: str, event_id: str, purse: float):
             print(f"[{slug}] Zeroed liveEarnings for {wd_count} pre-tournament WD player(s).")
 
         db.document(f"tournaments/{slug}").update({"status": "locked"})
-        print(f"[{slug}] ESPN reports event complete ({max_period} periods / 4 rounds) — status set to 'locked'.")
+        print(f"[{slug}] ESPN reports event complete (max_period={max_period}, standard_max={standard_max}) — status set to 'locked'.")
     elif is_complete:
-        print(f"[{slug}] ESPN says complete but only {max_period} period(s) recorded — skipping finalize.")
+        print(f"[{slug}] ESPN says complete but only {standard_max} standard period(s) recorded — skipping finalize.")
     else:
         rounds_approx = (max_period + 1) // 2
         print(f"[{slug}] Tournament in progress — approximately round {rounds_approx} of 4 ({max_period} periods).")
