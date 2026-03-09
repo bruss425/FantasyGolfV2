@@ -197,8 +197,13 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
     if not competitors:
         return {}
 
-    # Determine how far into the tournament the field is
+    # Determine how far into the tournament the field is.
+    # Cap at 8 periods (4 rounds × 2 nine-hole halves) for cut detection purposes.
+    # Playoff holes push max_rounds to 9+ for the playoff participants — without the
+    # cap, every player who finished 4 normal rounds (period=8) would be wrongly
+    # flagged as CUT because 8 < 9.
     max_rounds = max(get_rounds_played(c) for c in competitors)
+    cut_threshold = min(max_rounds, 8)
 
     # Sort by ESPN's order field — this is the authoritative leaderboard ranking
     sorted_comps = sorted(competitors, key=lambda c: c.get("order", 9999))
@@ -212,9 +217,9 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
         score = comp.get("score", "")
         rounds = get_rounds_played(comp)
 
-        # Cut: played fewer rounds than the field maximum once the cut has happened
-        # (max_rounds > 2 means rounds 3/4 are underway, so a 2-round player is out)
-        is_cut = max_rounds > 2 and rounds < max_rounds
+        # Cut: played fewer periods than the standard 72-hole field once the cut
+        # has happened (cut_threshold > 2 means we're past round 1).
+        is_cut = cut_threshold > 2 and rounds < cut_threshold
 
         if is_cut:
             result[name] = {
@@ -230,7 +235,7 @@ def build_payout_map(competitors: list[dict], purse: float) -> dict[str, dict]:
         while j < len(sorted_comps):
             nxt = sorted_comps[j]
             nxt_rounds = get_rounds_played(nxt)
-            nxt_cut = max_rounds > 2 and nxt_rounds < max_rounds
+            nxt_cut = cut_threshold > 2 and nxt_rounds < cut_threshold
             if nxt_cut or nxt.get("score", "") != score:
                 break
             j += 1
@@ -440,6 +445,23 @@ def sync_tournament(db, slug: str, event_id: str, purse: float):
     # max_period >= 8 prevents false finalization after any individual round ends.
     max_period = max((get_rounds_played(c) for c in competitors), default=0)
     if is_complete and max_period >= 8:
+        # Zero out liveEarnings for any player doc not in ESPN's field
+        # (pre-tournament withdrawals) so stale values don't appear on the leaderboard.
+        all_player_docs = db.collection(f"tournaments/{slug}/players").stream()
+        wd_batch = db.batch()
+        wd_count = 0
+        for pdoc in all_player_docs:
+            if pdoc.id not in payout_map:
+                wd_batch.set(
+                    db.document(f"tournaments/{slug}/players/{pdoc.id}"),
+                    {"liveEarnings": 0, "currentPosition": "WD", "currentScore": "WD"},
+                    merge=True,
+                )
+                wd_count += 1
+        if wd_count:
+            wd_batch.commit()
+            print(f"[{slug}] Zeroed liveEarnings for {wd_count} pre-tournament WD player(s).")
+
         db.document(f"tournaments/{slug}").update({"status": "locked"})
         print(f"[{slug}] ESPN reports event complete ({max_period} periods / 4 rounds) — status set to 'locked'.")
     elif is_complete:
