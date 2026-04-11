@@ -84,7 +84,17 @@ def normalize_name(name: str) -> str:
     name = name.translate(_CHAR_MAP)
     # Step 2: NFD decompose then drop all combining/accent marks
     nfd = unicodedata.normalize('NFD', name)
-    return ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
+    ascii_name = ''.join(c for c in nfd if unicodedata.category(c) != 'Mn')
+    # Step 3: apply any manual overrides for names where the CSV doc ID
+    # differs from what normalization produces (e.g. CSV uploaded with accent)
+    return _NAME_MAP.get(ascii_name, ascii_name)
+
+
+# Maps normalized (ASCII) ESPN name → exact Firestore doc ID
+# Add entries here when a player's CSV name differs from their normalized ESPN name.
+_NAME_MAP: dict[str, str] = {
+    "Alex Noren": "Alex Norén",
+}
 
 
 # ---------------------------------------------------------------------------
