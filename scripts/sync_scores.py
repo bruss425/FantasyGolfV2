@@ -93,7 +93,7 @@ def normalize_name(name: str) -> str:
 # Maps normalized (ASCII) ESPN name → exact Firestore doc ID
 # Add entries here when a player's CSV name differs from their normalized ESPN name.
 _NAME_MAP: dict[str, str] = {
-    "Alex Noren": "Alex Norén",
+    "Alex Noren": "Alexander Noren",
 }
 
 
