@@ -33,10 +33,12 @@ export function AuthProvider({ children }) {
           }
         } catch (err) {
           console.warn('Could not load user doc:', err.message)
-          setDisplayName(null)
+          // On Firestore errors (network, expired rules, etc.) do NOT force /setup.
+          // Treat as a known user with no profile data — they can still use the app.
+          setDisplayName(firebaseUser.displayName || null)
           setTeamName(null)
           setPhotoUrl(null)
-          setNeedsSetup(true)
+          setNeedsSetup(false)
         }
       } else {
         setDisplayName(null)

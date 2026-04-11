@@ -98,7 +98,14 @@ function GridCard({ player, isSelected, canAdd, onToggle }) {
       {/* Info */}
       <div className={`px-3 py-2.5 ${isSelected ? 'bg-emerald-950/60' : 'bg-gray-800'}`}>
         <p className="font-bold text-white text-sm leading-tight truncate">{player.name}</p>
-        <p className="text-xs text-gray-400 mt-0.5 truncate">{meta.flag} {meta.country}</p>
+        <div className="flex items-center justify-between mt-0.5 gap-1">
+          <p className="text-xs text-gray-400 truncate">{meta.flag} {meta.country}</p>
+          {player.odds && (
+            <span className={`text-xs font-bold font-mono shrink-0 ${player.odds.startsWith('+') ? 'text-yellow-400' : 'text-gray-400'}`}>
+              {player.odds}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   )

@@ -63,6 +63,18 @@ export default function Admin() {
   const [earningsTournamentId, setEarningsTournamentId] = useState('')
   const [earningsStatus, setEarningsStatus] = useState('')
 
+  // Odds fetch
+  const [oddsTournamentId, setOddsTournamentId] = useState('')
+  const [oddsAvailableSports, setOddsAvailableSports] = useState([])
+  const [oddsSelectedSport, setOddsSelectedSport] = useState(null)
+  const [oddsEvents, setOddsEvents] = useState([])
+  const [oddsSelectedEvent, setOddsSelectedEvent] = useState(null)
+  const [oddsSelectedBookmaker, setOddsSelectedBookmaker] = useState('')
+  const [oddsFetching, setOddsFetching] = useState(false)
+  const [oddsMatches, setOddsMatches] = useState(null)
+  const [oddsWriting, setOddsWriting] = useState(false)
+  const [oddsStatus, setOddsStatus] = useState('')
+
   useEffect(() => { loadTournaments() }, [])
 
   async function loadTournaments() {
@@ -305,6 +317,123 @@ export default function Admin() {
       setEarningsStatus(`Updated earnings for ${count} players.`)
     } catch (err) {
       setEarningsStatus(`Error: ${err.message}`)
+    }
+  }
+
+  // ── Odds fetch ───────────────────────────────────────────────────────────
+  function resetOdds() {
+    setOddsAvailableSports([])
+    setOddsSelectedSport(null)
+    setOddsEvents([])
+    setOddsSelectedEvent(null)
+    setOddsSelectedBookmaker('')
+    setOddsMatches(null)
+    setOddsStatus('')
+  }
+
+  async function handleFetchOdds() {
+    if (!oddsTournamentId) { setOddsStatus('Select a tournament first.'); return }
+    const apiKey = import.meta.env.VITE_ODDS_API_KEY
+    if (!apiKey) { setOddsStatus('VITE_ODDS_API_KEY not set in .env.local'); return }
+    setOddsFetching(true)
+    resetOdds()
+    try {
+      // Step 1: fetch available sports, filter to active golf outrights
+      const res = await fetch(
+        `https://api.the-odds-api.com/v4/sports/?apiKey=${apiKey}&all=false`
+      )
+      if (!res.ok) { setOddsStatus(`API error ${res.status}: ${res.statusText}`); return }
+      const sports = await res.json()
+      const golfSports = sports.filter(s =>
+        s.group?.toLowerCase().includes('golf') && s.has_outrights && s.active
+      )
+      if (!golfSports.length) {
+        setOddsStatus('No active golf outright markets found. Try again closer to tournament week.')
+        return
+      }
+      setOddsAvailableSports(golfSports)
+      // Auto-select if only one
+      if (golfSports.length === 1) await selectOddsSport(golfSports[0], apiKey)
+    } catch (err) {
+      setOddsStatus(`Network error: ${err.message}`)
+    } finally {
+      setOddsFetching(false)
+    }
+  }
+
+  async function selectOddsSport(sport, apiKey) {
+    setOddsSelectedSport(sport)
+    setOddsFetching(true)
+    try {
+      const key = apiKey || import.meta.env.VITE_ODDS_API_KEY
+      const res = await fetch(
+        `https://api.the-odds-api.com/v4/sports/${sport.key}/odds/?apiKey=${key}&regions=us&markets=outrights&oddsFormat=american`
+      )
+      if (!res.ok) { setOddsStatus(`API error ${res.status}: ${res.statusText}`); return }
+      const events = await res.json()
+      if (!Array.isArray(events) || events.length === 0) {
+        setOddsStatus('No odds available for this market yet.')
+        return
+      }
+      setOddsEvents(events)
+      if (events.length === 1) selectOddsEvent(events[0])
+    } catch (err) {
+      setOddsStatus(`Network error: ${err.message}`)
+    } finally {
+      setOddsFetching(false)
+    }
+  }
+
+  function selectOddsEvent(event) {
+    setOddsSelectedEvent(event)
+    const firstKey = event.bookmakers?.[0]?.key || ''
+    setOddsSelectedBookmaker(firstKey)
+  }
+
+  async function handleMatchOdds() {
+    const snap = await getDocs(collection(db, 'tournaments', oddsTournamentId, 'players'))
+    const playerNames = snap.docs.map(d => d.id)
+
+    const bookmaker = oddsSelectedEvent.bookmakers.find(b => b.key === oddsSelectedBookmaker)
+    const outcomes = bookmaker?.markets?.find(m => m.key === 'outrights')?.outcomes || []
+
+    const matched = []
+    const unmatched = []
+    for (const outcome of outcomes) {
+      const exact = playerNames.find(n => n === outcome.name)
+      const caseInsensitive = !exact && playerNames.find(n => n.toLowerCase() === outcome.name.toLowerCase())
+      const hit = exact || caseInsensitive
+      if (hit) {
+        matched.push({ playerName: hit, apiName: outcome.name, price: outcome.price })
+      } else {
+        unmatched.push(outcome.name)
+      }
+    }
+    setOddsMatches({ matched, unmatched })
+  }
+
+  async function handleWriteOdds() {
+    if (!oddsMatches?.matched?.length) return
+    setOddsWriting(true)
+    try {
+      const batch = writeBatch(db)
+      for (const { playerName, price } of oddsMatches.matched) {
+        const oddsStr = price > 0 ? `+${price}` : `${price}`
+        batch.set(
+          doc(db, 'tournaments', oddsTournamentId, 'players', playerName),
+          { odds: oddsStr },
+          { merge: true }
+        )
+      }
+      await batch.commit()
+      setOddsStatus(`Odds written for ${oddsMatches.matched.length} players.`)
+      setOddsMatches(null)
+      setOddsSelectedEvent(null)
+      setOddsEvents([])
+    } catch (err) {
+      setOddsStatus(`Error: ${err.message}`)
+    } finally {
+      setOddsWriting(false)
     }
   }
 
@@ -633,6 +762,129 @@ export default function Admin() {
           </EarningsCSVReader>
           {earningsStatus && (
             <p className={`mt-3 text-sm ${earningsStatus.startsWith('Error') || earningsStatus.startsWith('Select') ? 'text-red-600' : 'text-green-700'}`}>{earningsStatus}</p>
+          )}
+        </section>
+
+        {/* ── Fetch Odds ── */}
+        <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+          <h2 className="font-semibold text-gray-800 mb-1">Fetch Odds</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Pulls outright winner odds from The Odds API and writes them to each player's doc.
+            Requires <code className="bg-gray-100 px-1 rounded">VITE_ODDS_API_KEY</code> in <code className="bg-gray-100 px-1 rounded">.env.local</code>.
+          </p>
+
+          <div className="mb-3">
+            <label className="block text-sm text-gray-600 mb-1">Select Tournament</label>
+            <select
+              value={oddsTournamentId}
+              onChange={e => { setOddsTournamentId(e.target.value); resetOdds() }}
+              className={INPUT}
+            >
+              <option value="">-- Choose tournament --</option>
+              {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+
+          <button
+            onClick={handleFetchOdds}
+            disabled={!oddsTournamentId || oddsFetching}
+            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 rounded-lg transition disabled:opacity-50 mb-3"
+          >
+            {oddsFetching ? 'Fetching…' : 'Fetch Live Odds'}
+          </button>
+
+          {/* Step 1b: multiple golf markets found — pick one */}
+          {oddsAvailableSports.length > 1 && !oddsSelectedSport && (
+            <div className="mb-3 space-y-1">
+              <p className="text-sm text-gray-600 mb-2">Select a golf market:</p>
+              {oddsAvailableSports.map(s => (
+                <button
+                  key={s.key}
+                  onClick={() => selectOddsSport(s)}
+                  className="w-full text-left px-3 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                  <span className="font-medium">{s.title}</span>
+                  {s.description && <span className="text-gray-400 ml-2 text-xs">{s.description}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Step 2: multiple events within that market — let admin pick */}
+          {oddsEvents.length > 1 && !oddsSelectedEvent && (
+            <div className="mb-3 space-y-1">
+              <p className="text-sm text-gray-600 mb-2">Multiple events found — select one:</p>
+              {oddsEvents.map(ev => (
+                <button
+                  key={ev.id}
+                  onClick={() => selectOddsEvent(ev)}
+                  className="w-full text-left px-3 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                  <span className="font-medium">{ev.home_team !== 'Field' ? ev.home_team : ev.away_team}</span>
+                  <span className="text-gray-400 ml-2">{new Date(ev.commence_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Bookmaker picker */}
+          {oddsSelectedEvent && !oddsMatches && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Bookmaker</label>
+                <select
+                  value={oddsSelectedBookmaker}
+                  onChange={e => setOddsSelectedBookmaker(e.target.value)}
+                  className={INPUT}
+                >
+                  {oddsSelectedEvent.bookmakers.map(b => (
+                    <option key={b.key} value={b.key}>{b.title}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={handleMatchOdds}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg transition"
+              >
+                Match to Players
+              </button>
+            </div>
+          )}
+
+          {/* Match results */}
+          {oddsMatches && (
+            <div className="space-y-3">
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-green-800 mb-1">{oddsMatches.matched.length} players matched</p>
+                <div className="max-h-40 overflow-y-auto space-y-0.5">
+                  {oddsMatches.matched.map(m => (
+                    <div key={m.playerName} className="flex justify-between text-xs text-green-700">
+                      <span>{m.playerName}</span>
+                      <span className="font-mono font-bold">{m.price > 0 ? '+' : ''}{m.price}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {oddsMatches.unmatched.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-sm font-semibold text-amber-800">{oddsMatches.unmatched.length} not in your player list</p>
+                  <p className="text-xs text-amber-600 mt-0.5">These are in the odds feed but weren't uploaded to this tournament.</p>
+                </div>
+              )}
+              <button
+                onClick={handleWriteOdds}
+                disabled={oddsWriting || !oddsMatches.matched.length}
+                className="w-full bg-green-700 hover:bg-green-800 text-white font-semibold py-2 rounded-lg transition disabled:opacity-50"
+              >
+                {oddsWriting ? 'Writing…' : `Write Odds for ${oddsMatches.matched.length} Players`}
+              </button>
+            </div>
+          )}
+
+          {oddsStatus && (
+            <p className={`mt-3 text-sm ${oddsStatus.startsWith('Odds written') ? 'text-green-700' : 'text-red-600'}`}>
+              {oddsStatus}
+            </p>
           )}
         </section>
 
