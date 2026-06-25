@@ -8,8 +8,12 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // Replace with your actual admin UID from Firebase Auth console
-      return request.auth != null && request.auth.uid == "gSVGXMW9VWcXvn4JnPaQFrftpQt2";
+      return request.auth != null && (
+        request.auth.uid == "gSVGXMW9VWcXvn4JnPaQFrftpQt2" ||
+        request.auth.token.email in [
+          "johnrrussell97@gmail.com"
+        ]
+      );
     }
 
     function tournamentIsOpen(tournamentId) {

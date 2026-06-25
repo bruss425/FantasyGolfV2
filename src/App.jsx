@@ -10,6 +10,7 @@ import Admin from './pages/Admin'
 import SetupName from './pages/SetupName'
 import LeaderboardHub from './pages/LeaderboardHub'
 import Settings from './pages/Settings'
+import SeasonStats from './pages/SeasonStats'
 
 export default function App() {
   return (
@@ -47,6 +48,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Leaderboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/season"
+            element={
+              <ProtectedRoute>
+                <SeasonStats />
               </ProtectedRoute>
             }
           />

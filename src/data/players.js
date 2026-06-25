@@ -155,6 +155,8 @@ export const PLAYER_DATA = {
   'Xander Schauffele':            { country: 'United States',    flag: '🇺🇸' },
 }
 
+export const ALL_PLAYER_NAMES = Object.keys(PLAYER_DATA).sort((a, b) => a.localeCompare(b))
+
 export function getPlayerMeta(name) {
   return PLAYER_DATA[name] ?? { country: '', flag: '' }
 }

@@ -70,7 +70,13 @@ export function AuthProvider({ children }) {
     setPhotoUrl(photo)
   }
 
-  const isAdmin = user?.uid === import.meta.env.VITE_ADMIN_UID
+  const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+  const isAdmin =
+    user?.uid === import.meta.env.VITE_ADMIN_UID ||
+    (user?.email && adminEmails.includes(user.email.toLowerCase()))
 
   return (
     <AuthContext.Provider value={{ user, displayName, teamName, photoUrl, isAdmin, needsSetup, saveDisplayName, saveProfile }}>

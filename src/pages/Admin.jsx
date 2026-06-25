@@ -12,6 +12,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { db, storage } from '../lib/firebase'
 import { useAuth } from '../context/AuthContext'
 import { useCSVReader } from 'react-papaparse'
+import ManagePlayersSection from '../components/ManagePlayersSection'
 
 const INPUT = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500'
 
@@ -738,6 +739,9 @@ export default function Admin() {
             <p className={`mt-3 text-sm ${uploadStatus.startsWith('Error') || uploadStatus.startsWith('Select') ? 'text-red-600' : 'text-green-700'}`}>{uploadStatus}</p>
           )}
         </section>
+
+        {/* ── Manage Players ── */}
+        <ManagePlayersSection tournaments={tournaments} />
 
         {/* ── Upload Earnings CSV ── */}
         <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">

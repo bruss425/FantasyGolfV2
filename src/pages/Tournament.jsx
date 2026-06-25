@@ -105,6 +105,7 @@ export default function Tournament() {
   const filteredPlayers = useMemo(() => {
     const q = search.toLowerCase()
     return players
+      .filter(p => (p.price ?? 0) > 0)
       .filter(p => p.name.toLowerCase().includes(q))
       .sort((a, b) => b.price - a.price)
   }, [players, search])
